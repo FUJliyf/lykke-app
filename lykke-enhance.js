@@ -24,9 +24,9 @@
   var LONG_PRESS_MS = 550;
 
   /* ---- 配置位（空值即安全降级，绝不因缺 key 报错） ---- */
-  var AMAP_WEB_KEY = '';              // 高德 Web 服务 key；空=仅用内置城市坐标表，不发起地理编码
-  var SUPABASE_URL = '';              // Supabase Project URL；空=视频别名仅存本机
-  var SUPABASE_ANON = '';             // Supabase anon public key；空=不发起云端写
+  var AMAP_WEB_KEY = '196ec02f48bd98050b6786ce71a7d767'; // 高德 Web 服务 key；空=仅用内置城市坐标表
+  var SUPABASE_URL = 'https://qmazhqfceoptyfzzuavi.supabase.co';
+  var SUPABASE_ANON = 'sb_publishable_SvciO0FzeFzcHBWR5a4ndw_WZ0engZR';
 
   /* ---- 本地农历公历对照表（2024–2032，由离线程序核准，证据 web/lunar_table.json） ---- */
   var QIXI_TABLE = {
@@ -366,9 +366,36 @@
     var m = readAliasMap(); m[id] = name;
     try { localStorage.setItem('lykke_video_alias', JSON.stringify(m)); } catch (e) {}
   }
-  function syncAliasToCloud(recId, alias) {
-    // 稳定降级：Supabase URL/anon 未配置时只写本机；配置后再补云端同步，此处不主动发网络写
+  function supabaseHeaders() {
+    return {
+      'apikey': SUPABASE_ANON,
+      'Authorization': 'Bearer ' + SUPABASE_ANON,
+      'Content-Type': 'application/json'
+    };
+  }
+  function mergeCloudAliases() {
     if (!SUPABASE_URL || !SUPABASE_ANON) return;
+    fetch(SUPABASE_URL + '/rest/v1/video_alias?select=video_id,alias', { headers: supabaseHeaders() })
+      .then(function (r) { return r.json(); })
+      .then(function (rows) {
+        if (!rows || !rows.length) return;
+        var local = readAliasMap(), changed = false;
+        for (var i = 0; i < rows.length; i++) {
+          var vid = rows[i].video_id, al = rows[i].alias;
+          if (vid && local[vid] !== al) { local[vid] = al; changed = true; }
+        }
+        if (changed) { try { localStorage.setItem('lykke_video_alias', JSON.stringify(local)); } catch (e) {} }
+      })
+      .catch(function () {});
+  }
+  function syncAliasToCloud(recId, alias) {
+    if (!SUPABASE_URL || !SUPABASE_ANON || !recId) return;
+    var h = supabaseHeaders();
+    h['Prefer'] = 'resolution=merge-duplicates';
+    fetch(SUPABASE_URL + '/rest/v1/video_alias', {
+      method: 'POST', headers: h,
+      body: JSON.stringify({ video_id: recId, alias: alias, updated_at: new Date().toISOString() })
+    }).catch(function () {});
   }
   function applyVideoAliases() {
     if (routePath().indexOf('/videos') === -1) return;
@@ -655,6 +682,7 @@
     safe('M3-qixi-card', ensureQixiCard);
     safe('M6-birthday-card', ensureBirthdayCard);
     safe('M5-hide-withdrawn', hideWithdrawnRecons);
+    safe('M4-video-alias-merge', mergeCloudAliases);
     safe('M4-video-alias-apply', applyVideoAliases);
     safe('M7-add-spot-button', injectAddSpotButton);
     safe('M8-update-entry', ensureUpdateEntry);
